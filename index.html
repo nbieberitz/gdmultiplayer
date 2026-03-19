@@ -58,6 +58,7 @@
     transition: opacity 0.4s;
   }
   .screen.hidden { opacity: 0; pointer-events: none; }
+  #countdownScreen { transition: none; }
 
   /* ── ANIMATED GRID BG ── */
   #bgCanvas {
@@ -65,7 +66,8 @@
     inset: 0;
     z-index: 0;
   }
-  .screen, #gameCanvas { z-index: 1; position: relative; }
+  .screen { z-index: 1; }
+  #gameCanvas { z-index: 1; position: fixed; inset: 0; width: 100%; height: 100%; }
 
   /* ── TITLE ── */
   .title {
@@ -436,11 +438,8 @@
     <div class="field-label">Username</div>
     <input type="text" id="usernameInput" placeholder="Enter your name..." maxlength="16">
 
-    <div class="field-label">Cube Color</div>
+    <div class="field-label">Color</div>
     <div class="color-row" id="colorRow"></div>
-
-    <div class="field-label">Icon Shape</div>
-    <div class="shape-row" id="shapeRow"></div>
 
     <button class="btn btn-primary" id="playBtn">PLAY</button>
   </div>
@@ -518,15 +517,10 @@
 
 <!-- Firebase SDK -->
 <script type="module">
-// ════════════════════════════════════════════════════════
-//  🔥 FIREBASE CONFIG — replace with your own project
-// ════════════════════════════════════════════════════════
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
-import {
-  getDatabase, ref, set, get, onValue, update,
-  remove, onDisconnect, push, off
-} from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
 
+// ════════════════════════════════════════════════════════
+//  🔥 FIREBASE CONFIG
+// ════════════════════════════════════════════════════════
 const firebaseConfig = {
   apiKey:            "AIzaSyCUEyAC0Aib2e6L9_KkMzCPh_8_FFyQbAQ",
   authDomain:        "gdproject-e48d9.firebaseapp.com",
@@ -538,15 +532,24 @@ const firebaseConfig = {
 };
 // ════════════════════════════════════════════════════════
 
+// Firebase loaded via dynamic import so a network failure doesn't
+// break the whole game — solo mode always works.
 let db = null;
+let ref, set, get, onValue, update, remove, onDisconnect, off;
 let firebaseOk = false;
+
 try {
-  const app = initializeApp(firebaseConfig);
-  db = getDatabase(app);
-  // Quick connectivity test — won't fail here, errors surface on actual ops
-  firebaseOk = firebaseConfig.apiKey !== "YOUR_API_KEY";
+  const fbApp = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
+  const fbDb  = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js");
+  const app = fbApp.initializeApp(firebaseConfig);
+  db = fbDb.getDatabase(app);
+  ref = fbDb.ref; set = fbDb.set; get = fbDb.get;
+  onValue = fbDb.onValue; update = fbDb.update;
+  remove = fbDb.remove; onDisconnect = fbDb.onDisconnect; off = fbDb.off;
+  firebaseOk = true;
+  console.log("Firebase connected ✓");
 } catch(e) {
-  console.warn("Firebase init failed — running offline/solo only:", e);
+  console.warn("Firebase failed to load — solo mode only:", e);
 }
 
 // ─────────────────────────────────────────────
@@ -559,9 +562,9 @@ const COLORS = [
 ];
 const SHAPES = ['cube','ship','ball'];
 const TILE   = 48;           // grid unit
-const GRAVITY  = 0.72;
-const JUMP_VEL = -13.5;
-const BASE_SPEED = 5.5;
+// GRAVITY/JUMP handled per-mode in MODE_CFG
+// JUMP_VEL handled per-mode in MODE_CFG
+// BASE_SPEED handled in update_physics
 
 // ─────────────────────────────────────────────
 //  STATE
@@ -634,6 +637,8 @@ function showScreen(id) {
   $('gameCanvas').style.display = 'none';
   $('hud').style.display = 'none';
   $('soloBadge').style.display = 'none';
+  // Blur any focused element so spacebar can't accidentally activate buttons
+  if(document.activeElement) document.activeElement.blur();
 }
 function showGame() {
   screens.forEach(s => { const el=$(s); if(el) el.classList.add('hidden'); });
@@ -665,47 +670,12 @@ function buildColorRow() {
       playerColor = c;
       row.querySelectorAll('.swatch').forEach(x => x.classList.remove('selected'));
       s.classList.add('selected');
-      buildShapeRow(); // re-render with new color
     };
     row.appendChild(s);
   });
 }
 
-function drawShapePreview(canvas, shape, color) {
-  const ctx = canvas.getContext('2d');
-  const s = 24;
-  canvas.width = s; canvas.height = s;
-  ctx.clearRect(0,0,s,s);
-  ctx.fillStyle = color;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 8;
-  drawIcon(ctx, s/2, s/2, s*0.42, shape, color, 0);
-}
-
-function buildShapeRow() {
-  const row = $('shapeRow');
-  row.innerHTML = '';
-  SHAPES.forEach(sh => {
-    const btn = document.createElement('div');
-    btn.className = 'shape-btn' + (sh === playerShape ? ' selected' : '');
-    const cv = document.createElement('canvas');
-    cv.width = 24; cv.height = 24;
-    drawShapePreview(cv, sh, playerColor);
-    btn.appendChild(cv);
-    const lbl = document.createElement('span');
-    lbl.textContent = sh.toUpperCase();
-    btn.appendChild(lbl);
-    btn.onclick = () => {
-      playerShape = sh;
-      row.querySelectorAll('.shape-btn').forEach(x => x.classList.remove('selected'));
-      btn.classList.add('selected');
-    };
-    row.appendChild(btn);
-  });
-}
-
 buildColorRow();
-buildShapeRow();
 
 $('playBtn').onclick = () => {
   const name = $('usernameInput').value.trim();
@@ -734,7 +704,7 @@ $('joinBtn').onclick = async () => {
 
 $('soloBtn').onclick = () => {
   isSolo = true;
-  startCountdown(1);
+  startCountdown(3);
 };
 
 function genCode() {
@@ -860,27 +830,22 @@ $('roomCodeDisplay').onclick = () => {
 function startCountdown(from) {
   showScreen('countdownScreen');
   const el = $('countdownScreen');
-  let n = from;
-  el.textContent = n;
-
-  const tick = () => {
-    n--;
-    if(n <= 0) {
+  // Kill ALL transitions on this element so the number is instant and fully visible
+  el.style.cssText = 'opacity:1; transition:none;';
+  const show = (val) => {
+    if(val <= 0) {
       el.textContent = 'GO!';
       el.style.color = 'var(--neon-green)';
       el.style.textShadow = '0 0 20px var(--neon-green), 0 0 80px var(--neon-green)';
-      setTimeout(startGame, 600);
+      setTimeout(startGame, 650);
     } else {
-      el.textContent = n;
+      el.textContent = String(val);
       el.style.color = 'var(--neon-cyan)';
       el.style.textShadow = '0 0 20px var(--neon-cyan), 0 0 80px var(--neon-cyan)';
-      el.style.animation = 'none';
-      void el.offsetWidth;
-      el.style.animation = 'pulse 1s ease-in-out';
-      setTimeout(tick, 1000);
+      setTimeout(() => show(val - 1), 1000);
     }
   };
-  setTimeout(tick, 1000);
+  show(from);
 }
 
 // ─────────────────────────────────────────────
@@ -889,52 +854,173 @@ function startCountdown(from) {
 function drawIcon(ctx, cx, cy, size, shape, color, angle) {
   ctx.save();
   ctx.translate(cx, cy);
-  if(shape === 'cube') ctx.rotate(angle);
   ctx.fillStyle = color;
   ctx.shadowColor = color;
   ctx.shadowBlur = 12;
 
   if(shape === 'cube') {
+    ctx.rotate(angle);
     const hs = size * 0.85;
     ctx.fillRect(-hs/2, -hs/2, hs, hs);
-    // inner detail
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.fillRect(-hs/2+3, -hs/2+3, hs*0.4, hs*0.4);
     ctx.fillRect(hs/2-hs*0.4-3, -hs/2+3, hs*0.4, hs*0.4);
   } else if(shape === 'ship') {
     ctx.beginPath();
-    ctx.moveTo(size*0.6, 0);
-    ctx.lineTo(-size*0.5, -size*0.45);
-    ctx.lineTo(-size*0.3, 0);
-    ctx.lineTo(-size*0.5, size*0.45);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(size*0.55, 0);
+    ctx.lineTo(-size*0.5, -size*0.42);
+    ctx.lineTo(-size*0.28, 0);
+    ctx.lineTo(-size*0.5, size*0.42);
+    ctx.closePath(); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.beginPath();
-    ctx.arc(0, 0, size*0.2, 0, Math.PI*2);
-    ctx.fill();
-  } else { // ball
-    ctx.beginPath();
-    ctx.arc(0, 0, size*0.5, 0, Math.PI*2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 0, size*0.18, 0, Math.PI*2); ctx.fill();
+  } else if(shape === 'ball') {
+    ctx.rotate(angle);
+    ctx.beginPath(); ctx.arc(0, 0, size*0.48, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.arc(-size*0.12, -size*0.12, size*0.17, 0, Math.PI*2); ctx.fill();
+    // equator line
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-size*0.48, 0); ctx.lineTo(size*0.48, 0); ctx.stroke();
+  } else if(shape === 'wave') {
+    // Diamond
+    ctx.rotate(Math.PI/4);
+    const hs = size * 0.5;
+    ctx.fillRect(-hs/2, -hs/2, hs, hs);
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(-hs/2+2, -hs/2+2, hs*0.4, hs*0.4);
+  } else if(shape === 'spider') {
+    // Compact octagon
     ctx.beginPath();
-    ctx.arc(-size*0.12, -size*0.12, size*0.18, 0, Math.PI*2);
-    ctx.fill();
+    const r = size*0.44, sides = 8;
+    for(let i=0;i<sides;i++){
+      const a = (i/sides)*Math.PI*2 - Math.PI/8;
+      i===0 ? ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r)
+             : ctx.lineTo(Math.cos(a)*r, Math.sin(a)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath(); ctx.arc(0, 0, r*0.35, 0, Math.PI*2); ctx.fill();
+  } else {
+    // fallback cube
+    const hs = size*0.85;
+    ctx.fillRect(-hs/2,-hs/2,hs,hs);
   }
   ctx.restore();
 }
 
 // ─────────────────────────────────────────────
-//  LEVEL GENERATION
+//  LEVEL GENERATION — curated beatable patterns
 // ─────────────────────────────────────────────
+
+// ─── OBSTACLE LAYOUT KEY ──────────────────────────────────────────
+// { dx, type, h?, yOff?, fromCeil? }
+//   dx        : x offset from pattern start (px)
+//   type      : 'spike'|'block'|'saw'|'cspike'|'cblock'
+//   h         : height in tiles (blocks/cblocks only)
+//   yOff      : extra offset from surface, lifts obstacle off floor/ceil (default 0)
+//   fromCeil  : true → anchored from ceiling downward
+//
+// Spike   – triangle on floor, lethal
+// Cspike  – inverted triangle on ceiling, lethal
+// Block   – solid, cube can land on top; ship/wave/ball/spider = lethal
+// Cblock  – solid hanging from ceiling, all modes lethal
+// Saw     – spinning blade on floor, lethal circle
+//
+// Jump physics (cube): gravity=1.05/frame², jumpVel=-15.5, baseSpeed=7.5
+//   air time ≈ 29.5 frames  |  horizontal range ≈ 221px
+//   peak height ≈ (15.5²)/(2×1.05) ≈ 114px ≈ 2.4 tiles
+//   triple spike kill zone ≈ 137px  →  221-137 = 84px clearance  ✓
+
+const CUBE_PAT = {
+  easy: [
+    [ {dx:0,type:'spike'} ],
+    [ {dx:0,type:'block',h:1} ],
+    [ {dx:0,type:'spike'}, {dx:TILE*3,type:'block',h:1} ],
+    [ {dx:0,type:'saw'} ],
+    // Floating platform after spike — variety
+    [ {dx:0,type:'spike'}, {dx:TILE*3,type:'block',h:1,yOff:TILE*1} ],
+  ],
+  medium: [
+    [ {dx:0,type:'spike'}, {dx:TILE,type:'spike'} ],
+    [ {dx:0,type:'block',h:1}, {dx:TILE*2,type:'spike'} ],
+    [ {dx:0,type:'saw'}, {dx:TILE*3,type:'spike'} ],
+    [ {dx:0,type:'block',h:2} ],
+    [ {dx:0,type:'spike'}, {dx:TILE,type:'spike'}, {dx:TILE*3.5,type:'block',h:1} ],
+    [ {dx:0,type:'saw'}, {dx:TILE*2.5,type:'saw'} ],
+    // Platform section: jump to mid-air block, then onto another
+    [ {dx:0,type:'block',h:1,yOff:TILE*1}, {dx:TILE*2,type:'block',h:1,yOff:TILE*2}, {dx:TILE*4,type:'spike'} ],
+  ],
+  hard: [
+    [ {dx:0,type:'block',h:2}, {dx:TILE*3,type:'spike'}, {dx:TILE*4,type:'spike'} ],
+    [ {dx:0,type:'saw'}, {dx:TILE*2,type:'spike'}, {dx:TILE*3,type:'spike'}, {dx:TILE*5.5,type:'saw'} ],
+    [ {dx:0,type:'spike'}, {dx:TILE*2,type:'block',h:2}, {dx:TILE*4.5,type:'spike'} ],
+    [ {dx:0,type:'saw'}, {dx:TILE*1.5,type:'saw'}, {dx:TILE*4,type:'spike'}, {dx:TILE*5,type:'spike'} ],
+    // Platform + spikes: must jump on platform to clear obstacle
+    [ {dx:0,type:'block',h:1,yOff:TILE*1}, {dx:TILE*1.5,type:'spike'}, {dx:TILE*2.5,type:'spike'} ],
+  ],
+};
+
+// Ball/Spider: floor + ceiling obstacles, forcing gravity flips / teleports
+const BALL_PAT = {
+  easy: [
+    [ {dx:0,type:'spike'} ],
+    [ {dx:0,type:'cspike'} ],                                               // ceil only
+  ],
+  medium: [
+    [ {dx:0,type:'spike'}, {dx:TILE,type:'cspike'} ],                       // immediate flip needed
+    [ {dx:0,type:'cspike'}, {dx:TILE,type:'spike'} ],
+    [ {dx:0,type:'saw'}, {dx:TILE*2,type:'cspike'} ],
+    [ {dx:0,type:'spike'}, {dx:TILE*2,type:'cblock',h:1} ],
+  ],
+  hard: [
+    [ {dx:0,type:'saw'}, {dx:TILE*1.5,type:'cspike'}, {dx:TILE*3.5,type:'saw'} ],
+  ],
+};
+
+// Ship/Wave: scattered obstacles with a clear flyable path
+// Uses blocks from floor (h = tiles stacked), cblocks from ceiling
+// The gap between them is always passable — floor_h + ceil_h ≤ 6 tiles
+const SHIP_PAT = {
+  easy: [
+    [ {dx:0,type:'block',h:2} ],                                              // floor wall, fly over
+    [ {dx:0,type:'cblock',h:2} ],                                             // ceil wall, fly under
+    [ {dx:0,type:'block',h:2}, {dx:TILE*4,type:'cblock',h:2} ],              // S-curve
+    [ {dx:0,type:'cblock',h:2}, {dx:TILE*4,type:'block',h:2} ],
+    [ {dx:0,type:'block',h:1,yOff:TILE*3} ],                                 // mid-air block, dodge it
+  ],
+  medium: [
+    [ {dx:0,type:'block',h:3} ],
+    [ {dx:0,type:'cblock',h:3} ],
+    [ {dx:0,type:'block',h:2}, {dx:TILE*2.5,type:'cblock',h:2} ],
+    [ {dx:0,type:'block',h:3}, {dx:TILE*4,type:'cblock',h:3} ],
+    [ {dx:0,type:'block',h:1,yOff:TILE*2}, {dx:TILE*3,type:'cblock',h:1} ],  // float + ceil
+    [ {dx:0,type:'saw'}, {dx:TILE*2,type:'cblock',h:2} ],
+    [ {dx:0,type:'block',h:2}, {dx:TILE*1.5,type:'block',h:1,yOff:TILE*3} ],
+  ],
+  hard: [
+    [ {dx:0,type:'block',h:3}, {dx:TILE*2,type:'cblock',h:3} ],
+    [ {dx:0,type:'cblock',h:3}, {dx:TILE*2,type:'block',h:3} ],
+    [ {dx:0,type:'block',h:2}, {dx:TILE*2,type:'block',h:1,yOff:TILE*3}, {dx:TILE*4,type:'cblock',h:2} ],
+    [ {dx:0,type:'saw'}, {dx:TILE*2,type:'cblock',h:2}, {dx:TILE*5,type:'saw'} ],
+    [ {dx:0,type:'block',h:4}, {dx:TILE*3,type:'cblock',h:4} ],              // very tight
+  ],
+};
+
+const WAVE_PAT = SHIP_PAT;  // wave uses same patterns, relies on mode physics for difficulty
+
 class LevelGen {
   constructor(seed) {
-    this.seed = seed || 0;
-    this.obstacles = [];      // {x, type:'block'|'spike'|'tall', w, h}
-    this.genX = 800;          // how far ahead we've generated
-    this.lastObsEnd = 400;    // x where last obstacle group ended
-    this.difficulty = 0;      // 0-1, grows with distance
+    this.seed      = seed || 12345;
+    this.obstacles = [];
+    this.portals   = [];
+    this.genX      = 600;
+    this.lastObsEnd = 350;
+    this.difficulty = 0;
+    this.nextPortalX = 2000;
+    this.modeSeq   = ['cube','ball','ship','wave','spider','cube'];
+    this.modeIdx   = 0;
+    this.genMode   = 'cube';  // mode currently being generated for
   }
 
   rng() {
@@ -942,63 +1028,73 @@ class LevelGen {
     return (this.seed >>> 0) / 0xffffffff;
   }
 
-  setDifficulty(dist) {
-    this.difficulty = Math.min(1, dist / 8000);
-  }
+  setDifficulty(dist) { this.difficulty = Math.min(1, dist / 12000); }
 
   ensureAhead(viewX) {
-    while(this.genX < viewX + 1200) this.generateChunk();
+    while(this.genX < viewX + 1400) this.generateChunk();
   }
 
   generateChunk() {
     const D = this.difficulty;
-    // Gap before next group
-    const minGap = 160 - D*60;
-    const gap = minGap + this.rng() * (200 - D*60);
-    this.genX = this.lastObsEnd + gap;
 
-    // Group length
-    const groupLen = 80 + D*120 + this.rng()*100;
-    const type = this.pickType(D);
+    // ── Portal checkpoint ──
+    if(this.genX >= this.nextPortalX) {
+      this.modeIdx = (this.modeIdx + 1) % this.modeSeq.length;
+      const nextMode = this.modeSeq[this.modeIdx];
+      // Portal sits on floor: 3-tile tall gate
+      this.portals.push({ x: this.genX, mode: nextMode });
+      this.genX += 300;          // clear zone after portal
+      this.lastObsEnd = this.genX;
+      this.genMode = nextMode;   // future chunks use new mode patterns
+      this.nextPortalX = this.genX + 1800 + this.rng()*900;
+      return;
+    }
 
-    this.placeGroup(this.genX, groupLen, type);
-    this.lastObsEnd = this.genX + groupLen;
+    // ── Gap before next pattern ──
+    const isFly = this.genMode === 'ship' || this.genMode === 'wave';
+    const minGap = isFly
+      ? Math.max(100, 160 - D*50 + this.rng()*80)
+      : (D < 0.15 ? 260 + this.rng()*120 : Math.max(130, 220 - D*80 + this.rng()*100));
+
+    this.genX = this.lastObsEnd + minGap;
+
+    // ── Pick pattern ──
+    const pool = this.getPool(D);
+    const pat  = pool[Math.floor(this.rng() * pool.length)];
+
+    let patMaxX = 0;
+    for(const item of pat) {
+      const obs = {
+        x: this.genX + item.dx,
+        type: item.type,
+        w: TILE,
+        h: TILE * (item.h || 1),
+        yOff: (item.yOff || 0),
+        fromCeil: !!(item.fromCeil || item.type === 'cspike' || item.type === 'cblock'),
+      };
+      if(item.type === 'saw') obs.r = TILE * 0.42;
+      this.obstacles.push(obs);
+      patMaxX = Math.max(patMaxX, item.dx + obs.w);
+    }
+    this.lastObsEnd = this.genX + patMaxX;
     this.genX = this.lastObsEnd;
   }
 
-  pickType(D) {
-    const r = this.rng();
-    if(D < 0.2) return r < 0.7 ? 'spike' : 'block';
-    if(D < 0.5) return r < 0.5 ? 'spike' : (r < 0.8 ? 'block' : 'tall');
-    return r < 0.4 ? 'spike' : (r < 0.7 ? 'tall' : 'block');
+  getPool(D) {
+    const m = this.genMode;
+    let pats;
+    if(m === 'ball' || m === 'spider') pats = BALL_PAT;
+    else if(m === 'ship' || m === 'wave')  pats = SHIP_PAT;
+    else pats = CUBE_PAT;
+
+    if(D < 0.2)      return pats.easy;
+    else if(D < 0.5) return pats.medium;
+    else             return this.rng() < 0.35 ? pats.medium : pats.hard;
   }
 
-  placeGroup(startX, len, type) {
-    let x = startX;
-    const groundY = 0; // relative to floor
-    while(x < startX + len) {
-      if(type === 'spike') {
-        const count = 1 + Math.floor(this.rng() * (3 + this.difficulty*3));
-        for(let i=0; i<count; i++) {
-          this.obstacles.push({ x: x + i*TILE, type:'spike', w: TILE, h: TILE });
-        }
-        x += count*TILE + this.rng()*TILE*0.5;
-      } else if(type === 'block') {
-        const h = 1 + (this.difficulty > 0.4 && this.rng() < 0.3 ? 1 : 0);
-        this.obstacles.push({ x, type:'block', w: TILE, h: TILE*h });
-        x += TILE + this.rng()*TILE*0.3;
-      } else { // tall
-        const h = 2;
-        this.obstacles.push({ x, type:'tall', w: TILE, h: TILE*h });
-        x += TILE + this.rng()*TILE*0.5;
-      }
-      if(this.rng() < 0.3) x += TILE * (0.5 + this.rng());
-    }
-  }
-
-  // Cull far-behind obstacles
   prune(viewX) {
-    this.obstacles = this.obstacles.filter(o => o.x + o.w > viewX - 200);
+    this.obstacles = this.obstacles.filter(o => o.x + (o.w||TILE) > viewX - 300);
+    this.portals   = this.portals.filter(p => p.x > viewX - 300);
   }
 }
 
@@ -1013,29 +1109,44 @@ let bestDist = 0;
 let syncInterval;
 let otherRef;
 let gameSeed;
+let sawAngle = 0;
+let currentMode = 'cube';   // active game mode
+let modeBanner  = null;     // {text, alpha, timer}
 
-const FLOOR_Y_RATIO = 0.72; // floor at 72% height
+const FLOOR_Y_RATIO = 0.72;
+
+// ─── MODE PHYSICS CONFIGS ───
+const MODE_CFG = {
+  cube:   { gravity: 1.05, jumpVel: -15.5, hasGravity: true  },
+  ball:   { gravity: 1.05, jumpVel: null,  hasGravity: true  },  // flip gravity
+  ship:   { gravity: 0.55, jumpVel: null,  hasGravity: true  },  // hold to fly
+  wave:   { gravity: 0,    jumpVel: null,  hasGravity: false },   // auto diagonal
+  spider: { gravity: 1.05, jumpVel: null,  hasGravity: true  },  // teleport
+};
 
 function startGame() {
   gameRunning = true;
   resizeGame();
   window.addEventListener('resize', resizeGame);
 
-  const floorY = gameCanvas.height * FLOOR_Y_RATIO;
-
-  // Fetch seed from Firebase (for sync) or random
   const doStart = (seed) => {
     gameSeed = seed;
     level = new LevelGen(seed);
     generateStars();
+    currentMode = 'cube';
+    modeBanner  = null;
+    sawAngle    = 0;
 
+    const floorY = gameCanvas.height * FLOOR_Y_RATIO;
     player = {
-      x: 120, y: floorY - TILE,
+      x: 140, y: floorY - TILE,
       vy: 0,
       alive: true,
       angle: 0,
-      jumpCount: 0,
+      onGround: false,
+      gravDir: 1,   // 1 = normal, -1 = flipped (ball mode)
       dist: 0,
+      holdingJump: false,
     };
     camX = 0;
     showGame();
@@ -1046,7 +1157,8 @@ function startGame() {
       listenOthers();
       syncInterval = setInterval(syncPosition, 80);
     }
-
+    if(animId) cancelAnimationFrame(animId);
+    lastTime = performance.now() - 16;
     animId = requestAnimationFrame(gameLoop);
     setupInput();
   };
@@ -1079,71 +1191,104 @@ function generateStars() {
 }
 
 // ─── INPUT ───
-let jumpPressed = false;
+let holdJump = false;
 function setupInput() {
   document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup',   onKeyUp);
   document.addEventListener('touchstart', onTouch, {passive:true});
+  document.addEventListener('touchend',   onTouchEnd, {passive:true});
   gameCanvas.addEventListener('mousedown', onMouse);
+  gameCanvas.addEventListener('mouseup',   onMouseUp);
 }
 function teardownInput() {
   document.removeEventListener('keydown', onKeyDown);
+  document.removeEventListener('keyup',   onKeyUp);
   document.removeEventListener('touchstart', onTouch);
+  document.removeEventListener('touchend',   onTouchEnd);
   gameCanvas.removeEventListener('mousedown', onMouse);
+  gameCanvas.removeEventListener('mouseup',   onMouseUp);
 }
-function tryJump() {
-  if(!player.alive) return;
-  if(player.onGround) {
-    player.vy = JUMP_VEL;
-    player.onGround = false;
-    player.jumpCount = 1;
-    if(!isSolo && db && playerRef) update(playerRef, { jumped: Date.now() });
-  }
-}
+
 function onKeyDown(e) {
   if(e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
     e.preventDefault();
-    tryJump();
+    if(!holdJump) pressAction();
+    holdJump = true;
   }
 }
-function onTouch(e) { tryJump(); }
-function onMouse(e) { tryJump(); }
+function onKeyUp(e) {
+  if(e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') holdJump = false;
+}
+function onTouch(e)    { if(!holdJump) pressAction(); holdJump = true; }
+function onTouchEnd()  { holdJump = false; }
+function onMouse()     { if(!holdJump) pressAction(); holdJump = true; }
+function onMouseUp()   { holdJump = false; }
+
+function pressAction() {
+  if(!player || !player.alive) return;
+  const cfg = MODE_CFG[currentMode];
+  switch(currentMode) {
+    case 'cube':
+      if(player.onGround) {
+        player.vy = cfg.jumpVel;
+        player.onGround = false;
+        if(!isSolo && db && playerRef) update(playerRef, { jumped: Date.now() });
+      }
+      break;
+    case 'ball':
+      // Flip gravity
+      player.gravDir *= -1;
+      player.vy = 0;
+      break;
+    case 'spider':
+      // Teleport to opposite surface
+      doSpiderTeleport();
+      break;
+    // ship and wave handled by holdJump in physics
+  }
+}
+
+function doSpiderTeleport() {
+  const H = gameCanvas.height;
+  const floorY = H * FLOOR_Y_RATIO;
+  const ceilY  = floorY * 0.08;
+  if(player.gravDir === 1) {
+    // On floor, teleport to ceiling
+    player.y = ceilY;
+    player.gravDir = -1;
+    player.vy = 0;
+  } else {
+    // On ceiling, teleport to floor
+    player.y = floorY - TILE;
+    player.gravDir = 1;
+    player.vy = 0;
+  }
+}
 
 // ─── FIREBASE SYNC ───
 function syncPosition() {
   if(!playerRef || !player) return;
-  update(playerRef, {
-    x: Math.round(player.x + camX),
-    y: Math.round(player.y),
-    alive: player.alive
-  });
+  update(playerRef, { x: Math.round(player.x + camX), y: Math.round(player.y), alive: player.alive });
 }
-
 function listenOthers() {
   otherRef = ref(db, `rooms/${roomId}/players`);
   onValue(otherRef, snap => {
     const data = snap.val() || {};
-    // Update otherPlayers map
     Object.entries(data).forEach(([id, p]) => {
       if(id === playerId) return;
       otherPlayers[id] = { ...p };
     });
-    // Remove disconnected
-    Object.keys(otherPlayers).forEach(id => {
-      if(!data[id]) delete otherPlayers[id];
-    });
+    Object.keys(otherPlayers).forEach(id => { if(!data[id]) delete otherPlayers[id]; });
     updateAliveHud();
   });
 }
-
 function updateAliveHud() {
   const list = $('aliveList');
   list.innerHTML = '';
-  // Self
   const selfDiv = document.createElement('div');
   selfDiv.className = 'alive-entry';
   selfDiv.innerHTML = `<div class="alive-pip" style="background:${playerColor}"></div><span>${playerName} (you)</span>`;
   list.appendChild(selfDiv);
-  // Others
   Object.values(otherPlayers).forEach(p => {
     const d = document.createElement('div');
     d.className = 'alive-entry';
@@ -1156,94 +1301,197 @@ function updateAliveHud() {
 // ─── GAME LOOP ───
 let lastTime = 0;
 function gameLoop(ts) {
-  const dt = Math.min((ts - lastTime) / 16.67, 3);
+  const dt = Math.min((ts - lastTime) / 16.67, 2.5);
   lastTime = ts;
-
+  sawAngle += 0.06 * dt;
   update_physics(dt);
   render();
-
-  if(player.alive) {
-    animId = requestAnimationFrame(gameLoop);
-  } else {
-    endGame();
-  }
+  if(player.alive) animId = requestAnimationFrame(gameLoop);
+  else endGame();
 }
 
 function update_physics(dt) {
   if(!player.alive) return;
 
-  const W = gameCanvas.width;
   const H = gameCanvas.height;
   const floorY = H * FLOOR_Y_RATIO;
+  // Ceiling is 10% from the top — only lethal in fly modes
+  const ceilY = H * 0.06;
 
-  // Speed grows with distance
-  const speed = BASE_SPEED + Math.min(player.dist / 3000, 4);
-
-  // Move camera
+  const speed = 7.5 + Math.min(player.dist / 5000, 3.0);
   camX += speed * dt;
   player.dist = Math.round(camX / TILE * 2) / 2;
 
-  // Gravity
-  player.vy += GRAVITY * dt;
-  player.y  += player.vy * dt;
+  const cfg = MODE_CFG[currentMode];
+  const gDir = player.gravDir;
 
-  // Floor
-  player.onGround = false;
-  if(player.y >= floorY - TILE) {
-    player.y = floorY - TILE;
-    player.vy = 0;
-    player.onGround = true;
-    player.jumpCount = 0;
+  // ── MODE PHYSICS ──
+  if(currentMode === 'cube') {
+    player.vy += cfg.gravity * gDir * dt;
+    player.y  += player.vy * dt;
+
+  } else if(currentMode === 'ball') {
+    player.vy += cfg.gravity * gDir * dt;
+    player.y  += player.vy * dt;
+
+  } else if(currentMode === 'ship') {
+    if(holdJump) player.vy -= 1.3 * dt;
+    else         player.vy += cfg.gravity * dt;
+    player.vy = Math.max(-11, Math.min(11, player.vy));
+    player.y += player.vy * dt;
+
+  } else if(currentMode === 'wave') {
+    const waveSpd = 5.5;
+    player.vy = holdJump ? -waveSpd : waveSpd;
+    player.y += player.vy * dt;
+
+  } else if(currentMode === 'spider') {
+    player.vy += cfg.gravity * gDir * dt;
+    player.y  += player.vy * dt;
   }
 
-  // Rotate cube
-  if(playerShape === 'cube') player.angle += 0.08 * dt;
+  // ── FLOOR / CEILING COLLISION ──
+  player.onGround = false;
 
-  // Level generation
+  if(gDir === 1) {
+    // Normal gravity: floor below, ceiling above
+    if(player.y >= floorY - TILE) {
+      player.y = floorY - TILE; player.vy = 0; player.onGround = true;
+    }
+    if(player.y < ceilY) {
+      // Ship dies on ceiling; all other modes clamp
+      if(currentMode === 'ship') {
+        killPlayer();
+      } else {
+        player.y = ceilY; player.vy = Math.max(0, player.vy);
+      }
+    }
+  } else {
+    // Flipped gravity (ball mode): ceiling is floor, floor is ceiling
+    if(player.y <= ceilY) {
+      player.y = ceilY; player.vy = 0; player.onGround = true;
+    }
+    if(player.y > floorY - TILE) {
+      if(currentMode === 'ship') { player.y = floorY - TILE; player.vy = 0; }
+      else killPlayer();
+    }
+  }
+
+  // ── CUBE ROTATION ──
+  if(currentMode === 'cube') {
+    if(!player.onGround) {
+      player.angle += 0.12 * dt;
+    } else {
+      const snap = Math.round(player.angle / (Math.PI/2)) * (Math.PI/2);
+      player.angle += (snap - player.angle) * 0.3;
+    }
+  } else if(currentMode === 'ball') {
+    player.angle += 0.09 * gDir * dt;
+  } else {
+    player.angle = 0;
+  }
+
+  // ── LEVEL GEN ──
   level.setDifficulty(camX);
   level.ensureAhead(camX);
   level.prune(camX);
 
-  // Collision
-  const px = player.x;
-  const py = player.y;
-  const ps = TILE * 0.8;
+  // ── PORTAL CHECK ──
+  for(const portal of level.portals) {
+    const px = portal.x - camX + player.x;
+    if(px > -10 && px < 50 && !portal.used) {
+      portal.used = true;
+      switchMode(portal.mode);
+    }
+  }
+
+  // ── OBSTACLE COLLISION ──
+  // GD-accurate hitboxes (scaled from GD 30-unit tile to our 48px tile)
+  const P_OUT_INSET = 4,  P_OUT_SIZE = TILE - 8;   // outer 40×40 (blocks)
+  const P_IN_SIZE   = 30, P_IN_INSET = (TILE-30)/2; // inner 30×30 (lethal)
+  const SP_W = 16, SP_H = 32, SP_X_INSET = 16;       // spike 16×32, centered
+
+  const px = player.x, py = player.y;
+  const isFly = currentMode === 'ship' || currentMode === 'wave';
 
   for(const obs of level.obstacles) {
-    const ox = obs.x - camX + player.x;  // world to screen
-    const oy = floorY - obs.h;
+    const ox = obs.x - camX + player.x;
 
-    if(rectsOverlap(px - ps/2, py, ps, TILE, ox, oy, obs.w, obs.h)) {
-      if(obs.type === 'spike') {
-        killPlayer();
-        break;
+    // ─ Saw ─
+    if(obs.type === 'saw') {
+      const scx = ox + TILE/2;
+      const scy = floorY - obs.r - (obs.yOff||0);
+      const bx1 = px+P_IN_INSET, bx2 = bx1+P_IN_SIZE;
+      const by1 = py+P_IN_INSET, by2 = by1+P_IN_SIZE;
+      const nx = Math.max(bx1,Math.min(scx,bx2));
+      const ny = Math.max(by1,Math.min(scy,by2));
+      if((nx-scx)**2+(ny-scy)**2 < obs.r*obs.r) { killPlayer(); break; }
+      continue;
+    }
+
+    // ─ Floor spike ─
+    if(obs.type === 'spike') {
+      const baseY = floorY - (obs.yOff||0);
+      const hitX = ox + SP_X_INSET, hitY = baseY - TILE + 4;
+      if(rectsOverlap(px+P_IN_INSET,py+P_IN_INSET,P_IN_SIZE,P_IN_SIZE, hitX,hitY,SP_W,SP_H))
+        { killPlayer(); break; }
+      continue;
+    }
+
+    // ─ Ceiling spike ─
+    if(obs.type === 'cspike') {
+      const baseY = ceilY + (obs.yOff||0);
+      const hitX = ox + SP_X_INSET, hitY = baseY + 4;  // tip area
+      if(rectsOverlap(px+P_IN_INSET,py+P_IN_INSET,P_IN_SIZE,P_IN_SIZE, hitX,hitY,SP_W,SP_H))
+        { killPlayer(); break; }
+      continue;
+    }
+
+    // ─ Block / cblock ─
+    let oy;
+    if(obs.fromCeil) {
+      oy = ceilY + (obs.yOff||0);
+    } else {
+      oy = floorY - obs.h - (obs.yOff||0);
+    }
+
+    if(rectsOverlap(px+P_OUT_INSET,py+P_OUT_INSET,P_OUT_SIZE,P_OUT_SIZE, ox,oy,obs.w,obs.h)) {
+      const canLand = !isFly && !obs.fromCeil && (obs.yOff||0) === 0;
+      if(!canLand) {
+        // Ship/wave, ceiling blocks, and floating mid-air blocks are all lethal
+        killPlayer(); break;
+      }
+      // Floor block: cube/ball/spider can land on top
+      const playerBottom = py + P_OUT_INSET + P_OUT_SIZE;
+      const overlapDepth = playerBottom - oy;
+      if(overlapDepth <= 30 && player.vy >= -2) {
+        player.y = oy - P_OUT_INSET - P_OUT_SIZE;
+        player.vy = 0;
+        player.onGround = true;
       } else {
-        // Block — push up if coming from above, kill otherwise
-        const overlapTop = (py + TILE) - oy;
-        const overlapLeft = (px - ps/2 + ps) - ox;
-        const overlapRight = (ox + obs.w) - (px - ps/2);
-
-        if(overlapTop < 24 && player.vy >= 0 && py + TILE/2 < oy + obs.h/2) {
-          player.y = oy - TILE;
-          player.vy = 0;
-          player.onGround = true;
-          player.jumpCount = 0;
-        } else {
-          killPlayer();
-          break;
-        }
+        killPlayer(); break;
       }
     }
   }
 
-  // Fell off bottom
   if(player.y > H + 200) killPlayer();
+}
+
+function switchMode(newMode) {
+  currentMode = newMode;
+  player.gravDir = 1;
+  player.vy = 0;
+  player.angle = 0;
+  holdJump = false;
+  modeBanner = { text: newMode.toUpperCase() + ' MODE', alpha: 1.0, timer: 120 };
+  // Snap player to floor
+  const floorY = gameCanvas.height * FLOOR_Y_RATIO;
+  player.y = floorY - TILE;
 }
 
 function rectsOverlap(ax,ay,aw,ah, bx,by,bw,bh) {
   return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
 }
-
 function killPlayer() {
   player.alive = false;
   if(!isSolo && db && playerRef) update(playerRef, { alive: false });
@@ -1251,20 +1499,24 @@ function killPlayer() {
 
 // ─── RENDER ───
 function render() {
-  const W = gameCanvas.width;
-  const H = gameCanvas.height;
+  const W = gameCanvas.width, H = gameCanvas.height;
   const floorY = H * FLOOR_Y_RATIO;
   gctx.clearRect(0,0,W,H);
-
   drawGameBg(W, H, floorY);
+  drawPortals(W, H, floorY);
   drawObstacles(W, H, floorY);
   drawOtherPlayers(floorY);
   drawPlayer(floorY);
+  drawModeBanner(W, H);
   drawHudValues();
 }
 
+const MODE_COLORS = {
+  cube:'#00f5ff', ball:'#ff8800', ship:'#aa44ff', wave:'#00ff88', spider:'#ff0090'
+};
+
 function drawGameBg(W, H, floorY) {
-  // Sky gradient
+  const modeColor = MODE_COLORS[currentMode] || '#00f5ff';
   const g = gctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0, '#050810');
   g.addColorStop(0.7, '#0a0e1c');
@@ -1272,80 +1524,148 @@ function drawGameBg(W, H, floorY) {
   gctx.fillStyle = g;
   gctx.fillRect(0,0,W,H);
 
-  // Parallax stars
   bgStars.forEach(star => {
-    const sx = ((star.x - camX * star.spd) % (W + 40) + W + 40) % (W + 40);
+    const sx = ((star.x - camX * star.spd) % (W+40) + W+40) % (W+40);
     gctx.globalAlpha = star.alpha;
     gctx.fillStyle = '#ffffff';
-    gctx.beginPath();
-    gctx.arc(sx, star.y, star.r, 0, Math.PI*2);
-    gctx.fill();
+    gctx.beginPath(); gctx.arc(sx, star.y, star.r, 0, Math.PI*2); gctx.fill();
   });
   gctx.globalAlpha = 1;
 
-  // Horizon glow
-  const hg = gctx.createLinearGradient(0, floorY-60, 0, floorY+10);
-  hg.addColorStop(0, 'rgba(0,245,255,0.0)');
-  hg.addColorStop(1, 'rgba(0,245,255,0.08)');
-  gctx.fillStyle = hg;
-  gctx.fillRect(0, floorY-60, W, 70);
+  // Ceiling line
+  const ceilY = floorY * 0.08;
+  gctx.fillStyle = modeColor + '40';
+  gctx.fillRect(0, ceilY, W, 2);
 
   // Floor
   gctx.fillStyle = '#0e1526';
   gctx.fillRect(0, floorY, W, H - floorY);
-  gctx.fillStyle = 'rgba(0,245,255,0.5)';
+  gctx.fillStyle = modeColor + 'cc';
   gctx.fillRect(0, floorY, W, 2);
 
-  // Floor grid lines
-  gctx.strokeStyle = 'rgba(0,245,255,0.06)';
+  // Floor grid
+  gctx.strokeStyle = modeColor + '10';
   gctx.lineWidth = 1;
-  const gridOff = (camX * 0.2) % TILE;
-  for(let x = -gridOff % TILE; x < W; x += TILE) {
+  const gridOff = camX % TILE;
+  for(let x = -gridOff; x < W; x += TILE) {
     gctx.beginPath(); gctx.moveTo(x, floorY); gctx.lineTo(x, H); gctx.stroke();
   }
 }
 
+function drawPortals(W, H, floorY) {
+  const PORTAL_H = TILE * 3.5;   // 3.5 tiles tall, sitting on floor — reachable from any position
+  const PORTAL_W = TILE * 1.2;   // slightly wider than a tile
+  for(const portal of level.portals) {
+    const sx = portal.x - camX + player.x;
+    if(sx < -100 || sx > W + 100) continue;
+    const col = MODE_COLORS[portal.mode] || '#ffffff';
+    const top = floorY - PORTAL_H;
+    gctx.save();
+    // Glow fill
+    gctx.fillStyle = col + '14';
+    gctx.fillRect(sx, top, PORTAL_W, PORTAL_H);
+    // Left pillar
+    gctx.shadowColor = col; gctx.shadowBlur = 18;
+    gctx.strokeStyle = col; gctx.lineWidth = 3;
+    gctx.beginPath(); gctx.moveTo(sx, top); gctx.lineTo(sx, floorY); gctx.stroke();
+    // Right pillar
+    gctx.beginPath(); gctx.moveTo(sx+PORTAL_W, top); gctx.lineTo(sx+PORTAL_W, floorY); gctx.stroke();
+    // Top crossbar
+    gctx.beginPath(); gctx.moveTo(sx, top); gctx.lineTo(sx+PORTAL_W, top); gctx.stroke();
+    // Mode label above gate
+    gctx.shadowBlur = 8; gctx.fillStyle = col;
+    gctx.font = 'bold 10px "Orbitron", sans-serif';
+    gctx.textAlign = 'center';
+    gctx.fillText(portal.mode.toUpperCase(), sx + PORTAL_W/2, top - 8);
+    // Mode icon (small preview of the shape)
+    drawIcon(gctx, sx + PORTAL_W/2, floorY - TILE*1.5, TILE*0.6, portal.mode, col, 0);
+    gctx.restore();
+  }
+}
+
 function drawObstacles(W, H, floorY) {
+  const ceilY = H * 0.06;
   for(const obs of level.obstacles) {
     const sx = obs.x - camX + player.x;
-    if(sx > W + 20 || sx + obs.w < -20) continue;
-    const sy = floorY - obs.h;
+    if(sx > W+80 || sx + (obs.w||TILE) < -80) continue;
 
     if(obs.type === 'spike') {
-      drawSpike(sx, floorY, obs.w);
+      drawSpike(sx, floorY - (obs.yOff||0), obs.w, false);
+    } else if(obs.type === 'cspike') {
+      drawSpike(sx, ceilY + (obs.yOff||0), obs.w, true);
+    } else if(obs.type === 'saw') {
+      drawSaw(sx + TILE/2, floorY - obs.r - (obs.yOff||0), obs.r);
     } else {
-      drawBlock(sx, sy, obs.w, obs.h, obs.type === 'tall');
+      // block or cblock
+      let sy;
+      if(obs.fromCeil) {
+        sy = ceilY + (obs.yOff||0);
+      } else {
+        sy = floorY - obs.h - (obs.yOff||0);
+      }
+      drawBlock(sx, sy, obs.w, obs.h, obs.fromCeil);
     }
   }
 }
 
-function drawSpike(sx, floorY, w) {
+function drawSpike(sx, baseY, w, fromCeil) {
   gctx.save();
-  gctx.fillStyle = '#ff0055';
-  gctx.shadowColor = '#ff0055';
-  gctx.shadowBlur = 10;
+  gctx.fillStyle = '#ff1144';
+  gctx.shadowColor = '#ff1144'; gctx.shadowBlur = 10;
   gctx.beginPath();
-  gctx.moveTo(sx, floorY);
-  gctx.lineTo(sx + w/2, floorY - TILE);
-  gctx.lineTo(sx + w, floorY);
-  gctx.closePath();
-  gctx.fill();
+  if(fromCeil) {
+    // Inverted: base at top (ceilY), tip points downward
+    gctx.moveTo(sx, baseY);
+    gctx.lineTo(sx + w/2, baseY + TILE*0.95);
+    gctx.lineTo(sx + w, baseY);
+  } else {
+    // Normal: base at bottom (floorY), tip points upward
+    gctx.moveTo(sx, baseY);
+    gctx.lineTo(sx + w/2, baseY - TILE*0.95);
+    gctx.lineTo(sx + w, baseY);
+  }
+  gctx.closePath(); gctx.fill();
+  gctx.strokeStyle = '#ff6688'; gctx.lineWidth = 1; gctx.shadowBlur = 0;
+  gctx.stroke();
   gctx.restore();
 }
 
-function drawBlock(sx, sy, w, h, tall) {
+function drawSaw(cx, cy, r) {
   gctx.save();
-  const color = tall ? '#ff8800' : '#2255ff';
-  gctx.fillStyle = color + '33';
+  gctx.translate(cx, cy);
+  gctx.rotate(sawAngle);
+  gctx.shadowColor = '#ff6600'; gctx.shadowBlur = 14;
+  // Outer teeth
+  const teeth = 8;
+  gctx.beginPath();
+  for(let i=0; i<teeth; i++) {
+    const a1 = (i/teeth)*Math.PI*2;
+    const a2 = ((i+0.5)/teeth)*Math.PI*2;
+    const a3 = ((i+1)/teeth)*Math.PI*2;
+    if(i===0) gctx.moveTo(Math.cos(a1)*r*0.65, Math.sin(a1)*r*0.65);
+    gctx.lineTo(Math.cos(a2)*r, Math.sin(a2)*r);
+    gctx.lineTo(Math.cos(a3)*r*0.65, Math.sin(a3)*r*0.65);
+  }
+  gctx.closePath();
+  gctx.fillStyle = '#cc4400'; gctx.fill();
+  gctx.strokeStyle = '#ff8844'; gctx.lineWidth = 1.5; gctx.stroke();
+  // Center
+  gctx.shadowBlur = 0;
+  gctx.beginPath(); gctx.arc(0,0,r*0.28,0,Math.PI*2);
+  gctx.fillStyle = '#ff6622'; gctx.fill();
+  gctx.restore();
+}
+
+function drawBlock(sx, sy, w, h, fromCeil) {
+  gctx.save();
+  const color = fromCeil ? '#cc44ff' : '#3366ff';
+  gctx.fillStyle = color + '2a';
   gctx.strokeStyle = color;
-  gctx.shadowColor = color;
-  gctx.shadowBlur = 8;
-  gctx.lineWidth = 2;
+  gctx.shadowColor = color; gctx.shadowBlur = 8;
+  gctx.lineWidth = 1.5;
   gctx.fillRect(sx, sy, w, h);
-  gctx.strokeRect(sx, sy, w, h);
-  // Diagonal lines
-  gctx.strokeStyle = color + '44';
-  gctx.lineWidth = 1;
+  gctx.strokeRect(sx+0.75, sy+0.75, w-1.5, h-1.5);
+  gctx.strokeStyle = color + '30'; gctx.lineWidth = 1; gctx.shadowBlur = 0;
   for(let i=0; i<=h; i+=TILE) {
     gctx.beginPath(); gctx.moveTo(sx,sy+i); gctx.lineTo(sx+w,sy+i); gctx.stroke();
   }
@@ -1353,23 +1673,18 @@ function drawBlock(sx, sy, w, h, tall) {
 }
 
 function drawOtherPlayers(floorY) {
-  // Others rendered behind (at their world-x, offset to screen)
   Object.entries(otherPlayers).forEach(([id, op]) => {
     if(op.alive === false) return;
-    // Convert their world x to screen x
-    const screenX = (op.x || 0) - camX + player.x;
+    const screenX = (op.x||0) - camX + player.x;
     const screenY = op.y || floorY - TILE;
-
-    gctx.globalAlpha = 0.65;
-    drawIcon(gctx, screenX + TILE/2, screenY + TILE/2, TILE, op.shape || 'cube', op.color || '#888', 0);
+    gctx.globalAlpha = 0.6;
+    drawIcon(gctx, screenX + TILE/2, screenY + TILE/2, TILE, op.shape||'cube', op.color||'#888', 0);
     gctx.globalAlpha = 1;
-
-    // Name label
     gctx.save();
     gctx.fillStyle = 'rgba(255,255,255,0.7)';
-    gctx.font = '10px Share Tech Mono';
+    gctx.font = '10px "Share Tech Mono",monospace';
     gctx.textAlign = 'center';
-    gctx.fillText(op.name || '?', screenX + TILE/2, screenY - 6);
+    gctx.fillText(op.name||'?', screenX + TILE/2, screenY - 6);
     gctx.restore();
   });
 }
@@ -1378,34 +1693,45 @@ function drawPlayer(floorY) {
   if(!player.alive) return;
   const cx = player.x + TILE/2;
   const cy = player.y + TILE/2;
+  const col = playerColor;
 
   // Trail
   gctx.save();
-  for(let i=1; i<=5; i++) {
-    const tx = cx - i*8;
-    gctx.globalAlpha = 0.06 * (6-i);
-    gctx.fillStyle = playerColor;
-    gctx.shadowColor = playerColor;
-    gctx.shadowBlur = 6;
+  for(let i=1; i<=6; i++) {
+    gctx.globalAlpha = 0.05*(7-i);
+    gctx.fillStyle = col; gctx.shadowColor = col; gctx.shadowBlur = 4;
     gctx.beginPath();
-    gctx.arc(tx, cy, TILE*0.3*(1-i*0.1), 0, Math.PI*2);
-    gctx.fill();
+    gctx.arc(cx - i*9, cy, TILE*0.28, 0, Math.PI*2); gctx.fill();
   }
-  gctx.globalAlpha = 1;
-  gctx.restore();
+  gctx.globalAlpha = 1; gctx.restore();
 
-  drawIcon(gctx, cx, cy, TILE, playerShape, playerColor, player.angle);
+  // Icon shape = current game mode
+  drawIcon(gctx, cx, cy, TILE, currentMode, col, player.angle);
 
-  // Landing glow
+  // Ground glow
   if(player.onGround) {
     gctx.save();
-    const lg = gctx.createRadialGradient(cx, floorY, 0, cx, floorY, 40);
-    lg.addColorStop(0, playerColor + '33');
-    lg.addColorStop(1, 'transparent');
+    const lg = gctx.createRadialGradient(cx, floorY, 0, cx, floorY, 36);
+    lg.addColorStop(0, col+'44'); lg.addColorStop(1, 'transparent');
     gctx.fillStyle = lg;
-    gctx.fillRect(cx-40, floorY-4, 80, 8);
+    gctx.fillRect(cx-36, floorY-4, 72, 8);
     gctx.restore();
   }
+}
+
+function drawModeBanner(W, H) {
+  if(!modeBanner || modeBanner.alpha <= 0) return;
+  modeBanner.timer--;
+  if(modeBanner.timer < 30) modeBanner.alpha -= 0.033;
+  const col = MODE_COLORS[currentMode] || '#fff';
+  gctx.save();
+  gctx.globalAlpha = modeBanner.alpha;
+  gctx.font = 'bold 28px "Orbitron", sans-serif';
+  gctx.textAlign = 'center';
+  gctx.fillStyle = col;
+  gctx.shadowColor = col; gctx.shadowBlur = 20;
+  gctx.fillText(modeBanner.text, W/2, H*0.35);
+  gctx.restore();
 }
 
 function drawHudValues() {
@@ -1417,29 +1743,23 @@ function endGame() {
   gameRunning = false;
   teardownInput();
   clearInterval(syncInterval);
-
   if(player.dist > bestDist) bestDist = player.dist;
   $('deathDist').textContent = Math.floor(player.dist);
   $('bestDist').textContent  = Math.floor(bestDist);
   $('backLobbyBtn').style.display = isSolo ? 'none' : '';
-
   setTimeout(() => showScreen('deathScreen'), 400);
 }
 
 // ─── DEATH SCREEN BUTTONS ───
 $('retryBtn').onclick = () => {
   otherPlayers = {};
-  if(!isSolo && db && roomId) {
-    // Reset room to allow restart — simpler: just restart solo-style
-    isSolo = true;
-  }
-  startCountdown(1);
+  if(!isSolo && db && roomId) isSolo = true;
+  startCountdown(3);
 };
 
 $('backLobbyBtn').onclick = async () => {
   isSolo = false;
   if(!db || !roomId) { showScreen('joinScreen'); return; }
-  // Re-register
   playerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
   const pData = { name: playerName, color: playerColor, shape: playerShape, ready: false, alive: true, x: 0, y: 0 };
   await set(playerRef, pData);
@@ -1447,7 +1767,6 @@ $('backLobbyBtn').onclick = async () => {
   isReady = false;
   $('readyBtn').textContent = 'READY UP';
   $('readyBtn').className = 'btn btn-primary';
-  // Reset started
   await update(ref(db, `rooms/${roomId}`), { started: false });
   showScreen('lobbyScreen');
   listenLobby();
@@ -1459,8 +1778,7 @@ $('backMenuBtn').onclick = () => {
   roomListeners = [];
   otherPlayers = {};
   roomId = null; roomRef = null; playerRef = null;
-  isReady = false;
-  isSolo = false;
+  isReady = false; isSolo = false;
   showScreen('menuScreen');
 };
 
