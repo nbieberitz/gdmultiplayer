@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GeoRush Multiplayer</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+
+  :root {
+    --neon-cyan: #00f5ff;
+    --neon-yellow: #ffee00;
+    --neon-pink: #ff0090;
+    --neon-green: #00ff88;
+    --bg-dark: #07080f;
+    --bg-panel: rgba(255,255,255,0.04);
+    --border-glow: rgba(0,245,255,0.3);
+    --text-main: #e8f4ff;
+    --text-dim: #5a7a9a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-dark);
+    color: var(--text-main);
+    font-family: 'Share Tech Mono', monospace;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* ── SCANLINE OVERLAY ── */
+  body::after {
+    content:'';
+    position:fixed;
+    inset:0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events:none;
+    z-index:9999;
+  }
+
+  /* ── SCREENS ── */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    transition: opacity 0.4s;
+  }
+  .screen.hidden { opacity: 0; pointer-events: none; }
+
+  /* ── ANIMATED GRID BG ── */
+  #bgCanvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+  }
+  .screen, #gameCanvas { z-index: 1; position: relative; }
+
+  /* ── TITLE ── */
+  .title {
+    font-family: 'Orbitron', sans-serif;
+    font-weight: 900;
+    font-size: clamp(2rem, 6vw, 4rem);
+    letter-spacing: 0.15em;
+    color: var(--neon-cyan);
+    text-shadow:
+      0 0 10px var(--neon-cyan),
+      0 0 40px var(--neon-cyan),
+      0 0 80px rgba(0,245,255,0.4);
+    margin-bottom: 8px;
+    text-align: center;
+  }
+  .subtitle {
+    font-size: 0.75rem;
+    letter-spacing: 0.3em;
+    color: var(--neon-yellow);
+    text-shadow: 0 0 8px var(--neon-yellow);
+    margin-bottom: 40px;
+    text-transform: uppercase;
+  }
+
+  /* ── PANEL ── */
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--border-glow);
+    border-radius: 4px;
+    padding: 28px 32px;
+    width: 100%;
+    max-width: 480px;
+    backdrop-filter: blur(12px);
+    box-shadow:
+      0 0 40px rgba(0,245,255,0.05),
+      inset 0 0 40px rgba(0,245,255,0.02);
+  }
+
+  /* ── INPUTS ── */
+  .field-label {
+    font-size: 0.65rem;
+    letter-spacing: 0.25em;
+    color: var(--neon-cyan);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  input[type=text] {
+    width: 100%;
+    background: rgba(0,245,255,0.05);
+    border: 1px solid rgba(0,245,255,0.25);
+    border-radius: 2px;
+    padding: 10px 14px;
+    color: var(--text-main);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    margin-bottom: 20px;
+  }
+  input[type=text]:focus {
+    border-color: var(--neon-cyan);
+    box-shadow: 0 0 12px rgba(0,245,255,0.3);
+  }
+  input[type=text]::placeholder { color: var(--text-dim); }
+
+  /* ── COLOR SWATCHES ── */
+  .color-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .swatch:hover { transform: scale(1.2); }
+  .swatch.selected {
+    border-color: #fff;
+    box-shadow: 0 0 10px rgba(255,255,255,0.6);
+    transform: scale(1.15);
+  }
+
+  /* ── ICON SHAPES ── */
+  .shape-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .shape-btn {
+    flex: 1;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,245,255,0.05);
+    border: 1px solid rgba(0,245,255,0.2);
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+    position: relative;
+    gap: 8px;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    flex-direction: column;
+  }
+  .shape-btn canvas { pointer-events: none; }
+  .shape-btn:hover, .shape-btn.selected {
+    background: rgba(0,245,255,0.12);
+    border-color: var(--neon-cyan);
+    color: var(--neon-cyan);
+  }
+
+  /* ── BUTTONS ── */
+  .btn {
+    width: 100%;
+    padding: 13px;
+    border: none;
+    border-radius: 2px;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 0.85rem;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .btn-primary {
+    background: var(--neon-cyan);
+    color: #000;
+    box-shadow: 0 0 20px rgba(0,245,255,0.4);
+  }
+  .btn-primary:hover {
+    background: #fff;
+    box-shadow: 0 0 30px rgba(0,245,255,0.8);
+    transform: translateY(-1px);
+  }
+  .btn-secondary {
+    background: transparent;
+    color: var(--neon-cyan);
+    border: 1px solid var(--neon-cyan);
+  }
+  .btn-secondary:hover {
+    background: rgba(0,245,255,0.1);
+    box-shadow: 0 0 15px rgba(0,245,255,0.2);
+  }
+  .btn-danger {
+    background: transparent;
+    color: var(--neon-pink);
+    border: 1px solid var(--neon-pink);
+  }
+  .btn-danger:hover { background: rgba(255,0,144,0.1); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none !important; }
+
+  /* ── ROOM CODE ── */
+  .room-code-display {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+  .room-code-display .code {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 2rem;
+    font-weight: 900;
+    color: var(--neon-yellow);
+    text-shadow: 0 0 20px var(--neon-yellow);
+    letter-spacing: 0.3em;
+    cursor: pointer;
+  }
+  .room-code-display .hint {
+    font-size: 0.6rem;
+    color: var(--text-dim);
+    letter-spacing: 0.2em;
+    margin-top: 4px;
+  }
+
+  /* ── PLAYER LIST ── */
+  #playerList {
+    max-height: 180px;
+    overflow-y: auto;
+    margin-bottom: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--neon-cyan) transparent;
+  }
+  .player-entry {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    font-size: 0.85rem;
+  }
+  .player-entry .pip {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .player-entry .name { flex: 1; }
+  .player-entry .status {
+    font-size: 0.6rem;
+    letter-spacing: 0.15em;
+    padding: 2px 6px;
+    border-radius: 2px;
+  }
+  .status-ready { color: var(--neon-green); border: 1px solid var(--neon-green); }
+  .status-waiting { color: var(--text-dim); border: 1px solid var(--text-dim); }
+
+  /* ── COUNTDOWN ── */
+  #countdownScreen {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(5rem, 20vw, 12rem);
+    font-weight: 900;
+    color: var(--neon-cyan);
+    text-shadow:
+      0 0 20px var(--neon-cyan),
+      0 0 80px var(--neon-cyan);
+    animation: pulse 1s ease-in-out;
+  }
+  @keyframes pulse {
+    0% { transform: scale(1.5); opacity: 0; }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* ── GAME CANVAS ── */
+  #gameCanvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── HUD ── */
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 20px;
+    right: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .hud-box {
+    background: rgba(7,8,15,0.75);
+    border: 1px solid rgba(0,245,255,0.2);
+    padding: 6px 12px;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    backdrop-filter: blur(6px);
+  }
+  .hud-val {
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.1rem;
+    color: var(--neon-cyan);
+  }
+  #aliveList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 160px;
+    overflow: hidden;
+  }
+  .alive-entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.6rem;
+    opacity: 0.9;
+  }
+  .alive-pip { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+  /* ── DEATH SCREEN ── */
+  #deathScreen {
+    background: rgba(7,8,15,0.92);
+    z-index: 20;
+  }
+  .death-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(2.5rem, 8vw, 5rem);
+    font-weight: 900;
+    color: var(--neon-pink);
+    text-shadow: 0 0 30px var(--neon-pink), 0 0 80px rgba(255,0,144,0.5);
+    margin-bottom: 8px;
+  }
+  .death-stat {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    letter-spacing: 0.15em;
+    margin-bottom: 40px;
+  }
+  .death-stat span { color: var(--neon-yellow); }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-60px);
+    background: rgba(7,8,15,0.9);
+    border: 1px solid var(--neon-cyan);
+    color: var(--neon-cyan);
+    padding: 10px 24px;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    letter-spacing: 0.15em;
+    z-index: 9000;
+    transition: transform 0.3s;
+    pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ── SOLO BADGE ── */
+  #soloBadge {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255,0,144,0.15);
+    border: 1px solid var(--neon-pink);
+    color: var(--neon-pink);
+    padding: 4px 14px;
+    border-radius: 2px;
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    z-index: 10;
+    display: none;
+  }
+
+  /* ── MISC ── */
+  .divider {
+    border: none;
+    border-top: 1px solid rgba(255,255,255,0.07);
+    margin: 16px 0;
+  }
+  .small-hint {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-align: center;
+    margin-top: 8px;
+  }
+  .error-msg {
+    color: var(--neon-pink);
+    font-size: 0.7rem;
+    letter-spacing: 0.1em;
+    min-height: 20px;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+<!-- Background canvas -->
+<canvas id="bgCanvas"></canvas>
+
+<!-- ══ MENU SCREEN ══ -->
+<div id="menuScreen" class="screen">
+  <div class="title">GeoRush</div>
+  <div class="subtitle">Multiplayer · Infinite · Precision</div>
+  <div class="panel">
+    <div class="field-label">Username</div>
+    <input type="text" id="usernameInput" placeholder="Enter your name..." maxlength="16">
+
+    <div class="field-label">Cube Color</div>
+    <div class="color-row" id="colorRow"></div>
+
+    <div class="field-label">Icon Shape</div>
+    <div class="shape-row" id="shapeRow"></div>
+
+    <button class="btn btn-primary" id="playBtn">PLAY</button>
+  </div>
+</div>
+
+<!-- ══ LOBBY SCREEN ══ -->
+<div id="lobbyScreen" class="screen hidden">
+  <div class="title" style="font-size:clamp(1.4rem,4vw,2.2rem);margin-bottom:4px">LOBBY</div>
+  <div class="subtitle" style="margin-bottom:24px">WAITING FOR PLAYERS</div>
+  <div class="panel">
+    <div class="room-code-display">
+      <div class="code" id="roomCodeDisplay" title="Click to copy">——————</div>
+      <div class="hint">ROOM CODE · CLICK TO COPY</div>
+    </div>
+    <div class="field-label">PLAYERS IN ROOM</div>
+    <div id="playerList"></div>
+    <div class="error-msg" id="lobbyError"></div>
+    <button class="btn btn-primary" id="readyBtn">READY UP</button>
+    <button class="btn btn-secondary" id="leaveBtn">LEAVE ROOM</button>
+    <hr class="divider">
+    <div class="field-label">JOIN A DIFFERENT ROOM</div>
+    <input type="text" id="joinCodeInput" placeholder="Enter room code..." maxlength="6" style="margin-bottom:8px;text-transform:uppercase">
+    <button class="btn btn-secondary" id="joinRoomBtn">JOIN ROOM</button>
+  </div>
+</div>
+
+<!-- ══ JOIN/CREATE SCREEN ══ -->
+<div id="joinScreen" class="screen hidden">
+  <div class="title" style="font-size:clamp(1.4rem,4vw,2.2rem);margin-bottom:4px">GAME MODE</div>
+  <div class="subtitle" style="margin-bottom:24px">CHOOSE HOW TO PLAY</div>
+  <div class="panel">
+    <button class="btn btn-primary" id="createRoomBtn">CREATE ROOM</button>
+    <hr class="divider">
+    <div class="field-label">JOIN EXISTING ROOM</div>
+    <input type="text" id="joinInput" placeholder="Room code..." maxlength="6" style="text-transform:uppercase">
+    <div class="error-msg" id="joinError"></div>
+    <button class="btn btn-secondary" id="joinBtn">JOIN ROOM</button>
+    <hr class="divider">
+    <button class="btn btn-danger" id="soloBtn">PLAY SOLO</button>
+  </div>
+</div>
+
+<!-- ══ COUNTDOWN ══ -->
+<div id="countdownScreen" class="screen hidden">3</div>
+
+<!-- ══ GAME CANVAS ══ -->
+<canvas id="gameCanvas" style="display:none"></canvas>
+
+<!-- ══ HUD ══ -->
+<div id="hud" style="display:none">
+  <div class="hud-box">
+    <div style="font-size:0.6rem;letter-spacing:0.15em;color:var(--text-dim)">DISTANCE</div>
+    <div class="hud-val" id="distanceHud">0</div>
+  </div>
+  <div class="hud-box" id="aliveBox">
+    <div style="font-size:0.6rem;letter-spacing:0.15em;color:var(--text-dim);margin-bottom:4px">ALIVE</div>
+    <div id="aliveList"></div>
+  </div>
+</div>
+<div id="soloBadge">SOLO MODE</div>
+
+<!-- ══ DEATH SCREEN ══ -->
+<div id="deathScreen" class="screen hidden">
+  <div class="death-title">YOU DIED</div>
+  <div class="death-stat">Distance: <span id="deathDist">0</span> &nbsp;|&nbsp; Best: <span id="bestDist">0</span></div>
+  <div class="panel" style="max-width:360px">
+    <button class="btn btn-primary" id="retryBtn">RETRY</button>
+    <button class="btn btn-secondary" id="backLobbyBtn" style="display:none">BACK TO LOBBY</button>
+    <button class="btn btn-danger" id="backMenuBtn">MAIN MENU</button>
+  </div>
+</div>
+
+<!-- ══ TOAST ══ -->
+<div id="toast"></div>
+
+<!-- Firebase SDK -->
+<script type="module">
+// ════════════════════════════════════════════════════════
+//  🔥 FIREBASE CONFIG — replace with your own project
+// ════════════════════════════════════════════════════════
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+import {
+  getDatabase, ref, set, get, onValue, update,
+  remove, onDisconnect, push, off
+} from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey:            "YOUR_API_KEY",
+  authDomain:        "YOUR_PROJECT.firebaseapp.com",
+  databaseURL:       "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId:         "YOUR_PROJECT",
+  storageBucket:     "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId:             "YOUR_APP_ID"
+};
+// ════════════════════════════════════════════════════════
+
+let db = null;
+let firebaseOk = false;
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getDatabase(app);
+  // Quick connectivity test — won't fail here, errors surface on actual ops
+  firebaseOk = firebaseConfig.apiKey !== "YOUR_API_KEY";
+} catch(e) {
+  console.warn("Firebase init failed — running offline/solo only:", e);
+}
+
+// ─────────────────────────────────────────────
+//  CONSTANTS
+// ─────────────────────────────────────────────
+const COLORS = [
+  '#ff0090','#ff4444','#ff8800','#ffee00',
+  '#00ff88','#00f5ff','#4488ff','#aa44ff',
+  '#ffffff','#ff66cc'
+];
+const SHAPES = ['cube','ship','ball'];
+const TILE   = 48;           // grid unit
+const GRAVITY  = 0.72;
+const JUMP_VEL = -13.5;
+const BASE_SPEED = 5.5;
+
+// ─────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────
+let playerColor = COLORS[5];
+let playerShape = 'cube';
+let playerName  = '';
+let playerId    = Math.random().toString(36).slice(2, 10);
+
+let roomId      = null;
+let roomRef     = null;
+let playerRef   = null;
+let roomListeners = [];
+
+let isSolo      = false;
+let isReady     = false;
+let gameRunning = false;
+
+let otherPlayers = {};   // id -> {name, color, shape, x, y, dead}
+
+// ─────────────────────────────────────────────
+//  BACKGROUND GRID ANIMATION
+// ─────────────────────────────────────────────
+const bgCanvas = document.getElementById('bgCanvas');
+const bgCtx    = bgCanvas.getContext('2d');
+let bgOff = 0;
+
+function resizeBg() {
+  bgCanvas.width  = window.innerWidth;
+  bgCanvas.height = window.innerHeight;
+}
+resizeBg();
+window.addEventListener('resize', resizeBg);
+
+function drawBg() {
+  const W = bgCanvas.width, H = bgCanvas.height;
+  bgCtx.clearRect(0,0,W,H);
+  bgOff = (bgOff + 0.4) % 60;
+
+  // Gradient sky
+  const grad = bgCtx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, '#050810');
+  grad.addColorStop(1, '#0a0f1e');
+  bgCtx.fillStyle = grad;
+  bgCtx.fillRect(0,0,W,H);
+
+  // Grid lines
+  bgCtx.strokeStyle = 'rgba(0,245,255,0.04)';
+  bgCtx.lineWidth = 1;
+  for(let x = -bgOff % 60; x < W; x += 60) {
+    bgCtx.beginPath(); bgCtx.moveTo(x,0); bgCtx.lineTo(x,H); bgCtx.stroke();
+  }
+  for(let y = 0; y < H; y += 60) {
+    bgCtx.beginPath(); bgCtx.moveTo(0,y); bgCtx.lineTo(W,y); bgCtx.stroke();
+  }
+  requestAnimationFrame(drawBg);
+}
+drawBg();
+
+// ─────────────────────────────────────────────
+//  UI HELPERS
+// ─────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const screens = ['menuScreen','joinScreen','lobbyScreen','countdownScreen','deathScreen'];
+function showScreen(id) {
+  screens.forEach(s => {
+    const el = $(s);
+    if(el) el.classList.toggle('hidden', s !== id);
+  });
+  $('gameCanvas').style.display = 'none';
+  $('hud').style.display = 'none';
+  $('soloBadge').style.display = 'none';
+}
+function showGame() {
+  screens.forEach(s => { const el=$(s); if(el) el.classList.add('hidden'); });
+  $('gameCanvas').style.display = 'block';
+  $('hud').style.display = 'flex';
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ─────────────────────────────────────────────
+//  MENU SETUP
+// ─────────────────────────────────────────────
+function buildColorRow() {
+  const row = $('colorRow');
+  row.innerHTML = '';
+  COLORS.forEach(c => {
+    const s = document.createElement('div');
+    s.className = 'swatch' + (c === playerColor ? ' selected' : '');
+    s.style.background = c;
+    s.style.boxShadow = `0 0 8px ${c}88`;
+    s.onclick = () => {
+      playerColor = c;
+      row.querySelectorAll('.swatch').forEach(x => x.classList.remove('selected'));
+      s.classList.add('selected');
+      buildShapeRow(); // re-render with new color
+    };
+    row.appendChild(s);
+  });
+}
+
+function drawShapePreview(canvas, shape, color) {
+  const ctx = canvas.getContext('2d');
+  const s = 24;
+  canvas.width = s; canvas.height = s;
+  ctx.clearRect(0,0,s,s);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8;
+  drawIcon(ctx, s/2, s/2, s*0.42, shape, color, 0);
+}
+
+function buildShapeRow() {
+  const row = $('shapeRow');
+  row.innerHTML = '';
+  SHAPES.forEach(sh => {
+    const btn = document.createElement('div');
+    btn.className = 'shape-btn' + (sh === playerShape ? ' selected' : '');
+    const cv = document.createElement('canvas');
+    cv.width = 24; cv.height = 24;
+    drawShapePreview(cv, sh, playerColor);
+    btn.appendChild(cv);
+    const lbl = document.createElement('span');
+    lbl.textContent = sh.toUpperCase();
+    btn.appendChild(lbl);
+    btn.onclick = () => {
+      playerShape = sh;
+      row.querySelectorAll('.shape-btn').forEach(x => x.classList.remove('selected'));
+      btn.classList.add('selected');
+    };
+    row.appendChild(btn);
+  });
+}
+
+buildColorRow();
+buildShapeRow();
+
+$('playBtn').onclick = () => {
+  const name = $('usernameInput').value.trim();
+  if(!name) { showToast('ENTER A USERNAME'); return; }
+  playerName = name;
+  showScreen('joinScreen');
+};
+
+// ─────────────────────────────────────────────
+//  JOIN / CREATE
+// ─────────────────────────────────────────────
+$('createRoomBtn').onclick = async () => {
+  if(!firebaseOk) { showToast('FIREBASE NOT CONFIGURED — USE SOLO'); return; }
+  roomId = genCode();
+  await setupRoom(true);
+};
+
+$('joinBtn').onclick = async () => {
+  const code = $('joinInput').value.trim().toUpperCase();
+  if(code.length !== 6) { $('joinError').textContent = 'CODE MUST BE 6 CHARACTERS'; return; }
+  $('joinError').textContent = '';
+  if(!firebaseOk) { showToast('FIREBASE NOT CONFIGURED — USE SOLO'); return; }
+  roomId = code;
+  await setupRoom(false);
+};
+
+$('soloBtn').onclick = () => {
+  isSolo = true;
+  startCountdown(1);
+};
+
+function genCode() {
+  return Math.random().toString(36).slice(2,8).toUpperCase();
+}
+
+// ─────────────────────────────────────────────
+//  FIREBASE ROOM
+// ─────────────────────────────────────────────
+async function setupRoom(isCreator) {
+  roomRef   = ref(db, `rooms/${roomId}`);
+  playerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
+
+  if(isCreator) {
+    await set(roomRef, { started: false, seed: Math.floor(Math.random()*999999) });
+  } else {
+    const snap = await get(roomRef);
+    if(!snap.exists()) { $('joinError').textContent = 'ROOM NOT FOUND'; return; }
+    if(snap.val().started) { $('joinError').textContent = 'GAME ALREADY IN PROGRESS'; return; }
+  }
+
+  // Register self
+  const pData = { name: playerName, color: playerColor, shape: playerShape, ready: false, alive: true, x: 0, y: 0 };
+  await set(playerRef, pData);
+  onDisconnect(playerRef).remove();
+
+  isSolo = false;
+  showScreen('lobbyScreen');
+  $('roomCodeDisplay').textContent = roomId;
+  $('backLobbyBtn').style.display = '';
+  listenLobby();
+}
+
+function listenLobby() {
+  // Clear old listeners
+  roomListeners.forEach(fn => fn());
+  roomListeners = [];
+
+  const playersRef = ref(db, `rooms/${roomId}/players`);
+  const off1 = onValue(playersRef, snap => {
+    const data = snap.val() || {};
+    renderPlayerList(data);
+    checkAutoStart(data);
+  });
+  roomListeners.push(() => off(playersRef, 'value', off1));
+
+  // Listen for game start
+  const startedRef = ref(db, `rooms/${roomId}/started`);
+  const off2 = onValue(startedRef, snap => {
+    if(snap.val() === true && !gameRunning) {
+      roomListeners.forEach(fn => fn());
+      startCountdown(3);
+    }
+  });
+  roomListeners.push(() => off(startedRef, 'value', off2));
+}
+
+function renderPlayerList(data) {
+  const list = $('playerList');
+  list.innerHTML = '';
+  Object.entries(data).forEach(([id, p]) => {
+    const div = document.createElement('div');
+    div.className = 'player-entry';
+    div.innerHTML = `
+      <div class="pip" style="background:${p.color};box-shadow:0 0 6px ${p.color}"></div>
+      <span class="name">${p.name}${id===playerId?' (you)':''}</span>
+      <span class="status ${p.ready?'status-ready':'status-waiting'}">${p.ready?'READY':'WAITING'}</span>
+    `;
+    list.appendChild(div);
+  });
+}
+
+function checkAutoStart(data) {
+  const players = Object.values(data);
+  if(players.length < 1) return;
+  if(players.every(p => p.ready)) {
+    // All ready — first player (creator) triggers start
+    const ids = Object.keys(data).sort();
+    if(ids[0] === playerId) {
+      update(ref(db, `rooms/${roomId}`), { started: true });
+    }
+  }
+}
+
+$('readyBtn').onclick = async () => {
+  isReady = !isReady;
+  $('readyBtn').textContent = isReady ? 'UNREADY' : 'READY UP';
+  $('readyBtn').className = isReady ? 'btn btn-danger' : 'btn btn-primary';
+  if(playerRef) await update(playerRef, { ready: isReady });
+};
+
+$('leaveBtn').onclick = leaveRoom;
+
+async function leaveRoom() {
+  if(playerRef) await remove(playerRef);
+  roomListeners.forEach(fn => fn());
+  roomListeners = [];
+  roomId = null; roomRef = null; playerRef = null;
+  isReady = false;
+  $('readyBtn').textContent = 'READY UP';
+  $('readyBtn').className = 'btn btn-primary';
+  showScreen('joinScreen');
+}
+
+// Lobby join another room
+$('joinRoomBtn').onclick = async () => {
+  const code = $('joinCodeInput').value.trim().toUpperCase();
+  if(code.length !== 6) { $('lobbyError').textContent = 'CODE MUST BE 6 CHARACTERS'; return; }
+  $('lobbyError').textContent = '';
+  await leaveRoom();
+  roomId = code;
+  await setupRoom(false);
+};
+
+$('roomCodeDisplay').onclick = () => {
+  navigator.clipboard?.writeText(roomId);
+  showToast('CODE COPIED!');
+};
+
+// ─────────────────────────────────────────────
+//  COUNTDOWN
+// ─────────────────────────────────────────────
+function startCountdown(from) {
+  showScreen('countdownScreen');
+  const el = $('countdownScreen');
+  let n = from;
+  el.textContent = n;
+
+  const tick = () => {
+    n--;
+    if(n <= 0) {
+      el.textContent = 'GO!';
+      el.style.color = 'var(--neon-green)';
+      el.style.textShadow = '0 0 20px var(--neon-green), 0 0 80px var(--neon-green)';
+      setTimeout(startGame, 600);
+    } else {
+      el.textContent = n;
+      el.style.color = 'var(--neon-cyan)';
+      el.style.textShadow = '0 0 20px var(--neon-cyan), 0 0 80px var(--neon-cyan)';
+      el.style.animation = 'none';
+      void el.offsetWidth;
+      el.style.animation = 'pulse 1s ease-in-out';
+      setTimeout(tick, 1000);
+    }
+  };
+  setTimeout(tick, 1000);
+}
+
+// ─────────────────────────────────────────────
+//  ICON DRAWING
+// ─────────────────────────────────────────────
+function drawIcon(ctx, cx, cy, size, shape, color, angle) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  if(shape === 'cube') ctx.rotate(angle);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+
+  if(shape === 'cube') {
+    const hs = size * 0.85;
+    ctx.fillRect(-hs/2, -hs/2, hs, hs);
+    // inner detail
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillRect(-hs/2+3, -hs/2+3, hs*0.4, hs*0.4);
+    ctx.fillRect(hs/2-hs*0.4-3, -hs/2+3, hs*0.4, hs*0.4);
+  } else if(shape === 'ship') {
+    ctx.beginPath();
+    ctx.moveTo(size*0.6, 0);
+    ctx.lineTo(-size*0.5, -size*0.45);
+    ctx.lineTo(-size*0.3, 0);
+    ctx.lineTo(-size*0.5, size*0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath();
+    ctx.arc(0, 0, size*0.2, 0, Math.PI*2);
+    ctx.fill();
+  } else { // ball
+    ctx.beginPath();
+    ctx.arc(0, 0, size*0.5, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath();
+    ctx.arc(-size*0.12, -size*0.12, size*0.18, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ─────────────────────────────────────────────
+//  LEVEL GENERATION
+// ─────────────────────────────────────────────
+class LevelGen {
+  constructor(seed) {
+    this.seed = seed || 0;
+    this.obstacles = [];      // {x, type:'block'|'spike'|'tall', w, h}
+    this.genX = 800;          // how far ahead we've generated
+    this.lastObsEnd = 400;    // x where last obstacle group ended
+    this.difficulty = 0;      // 0-1, grows with distance
+  }
+
+  rng() {
+    this.seed = (this.seed * 1664525 + 1013904223) & 0xffffffff;
+    return (this.seed >>> 0) / 0xffffffff;
+  }
+
+  setDifficulty(dist) {
+    this.difficulty = Math.min(1, dist / 8000);
+  }
+
+  ensureAhead(viewX) {
+    while(this.genX < viewX + 1200) this.generateChunk();
+  }
+
+  generateChunk() {
+    const D = this.difficulty;
+    // Gap before next group
+    const minGap = 160 - D*60;
+    const gap = minGap + this.rng() * (200 - D*60);
+    this.genX = this.lastObsEnd + gap;
+
+    // Group length
+    const groupLen = 80 + D*120 + this.rng()*100;
+    const type = this.pickType(D);
+
+    this.placeGroup(this.genX, groupLen, type);
+    this.lastObsEnd = this.genX + groupLen;
+    this.genX = this.lastObsEnd;
+  }
+
+  pickType(D) {
+    const r = this.rng();
+    if(D < 0.2) return r < 0.7 ? 'spike' : 'block';
+    if(D < 0.5) return r < 0.5 ? 'spike' : (r < 0.8 ? 'block' : 'tall');
+    return r < 0.4 ? 'spike' : (r < 0.7 ? 'tall' : 'block');
+  }
+
+  placeGroup(startX, len, type) {
+    let x = startX;
+    const groundY = 0; // relative to floor
+    while(x < startX + len) {
+      if(type === 'spike') {
+        const count = 1 + Math.floor(this.rng() * (3 + this.difficulty*3));
+        for(let i=0; i<count; i++) {
+          this.obstacles.push({ x: x + i*TILE, type:'spike', w: TILE, h: TILE });
+        }
+        x += count*TILE + this.rng()*TILE*0.5;
+      } else if(type === 'block') {
+        const h = 1 + (this.difficulty > 0.4 && this.rng() < 0.3 ? 1 : 0);
+        this.obstacles.push({ x, type:'block', w: TILE, h: TILE*h });
+        x += TILE + this.rng()*TILE*0.3;
+      } else { // tall
+        const h = 2;
+        this.obstacles.push({ x, type:'tall', w: TILE, h: TILE*h });
+        x += TILE + this.rng()*TILE*0.5;
+      }
+      if(this.rng() < 0.3) x += TILE * (0.5 + this.rng());
+    }
+  }
+
+  // Cull far-behind obstacles
+  prune(viewX) {
+    this.obstacles = this.obstacles.filter(o => o.x + o.w > viewX - 200);
+  }
+}
+
+// ─────────────────────────────────────────────
+//  GAME ENGINE
+// ─────────────────────────────────────────────
+const gameCanvas = $('gameCanvas');
+const gctx = gameCanvas.getContext('2d');
+
+let player, level, camX, bgStars, animId;
+let bestDist = 0;
+let syncInterval;
+let otherRef;
+let gameSeed;
+
+const FLOOR_Y_RATIO = 0.72; // floor at 72% height
+
+function startGame() {
+  gameRunning = true;
+  resizeGame();
+  window.addEventListener('resize', resizeGame);
+
+  const floorY = gameCanvas.height * FLOOR_Y_RATIO;
+
+  // Fetch seed from Firebase (for sync) or random
+  const doStart = (seed) => {
+    gameSeed = seed;
+    level = new LevelGen(seed);
+    generateStars();
+
+    player = {
+      x: 120, y: floorY - TILE,
+      vy: 0,
+      alive: true,
+      angle: 0,
+      jumpCount: 0,
+      dist: 0,
+    };
+    camX = 0;
+    showGame();
+    if(isSolo) $('soloBadge').style.display = 'block';
+    $('aliveBox').style.display = isSolo ? 'none' : 'flex';
+
+    if(!isSolo && db) {
+      listenOthers();
+      syncInterval = setInterval(syncPosition, 80);
+    }
+
+    animId = requestAnimationFrame(gameLoop);
+    setupInput();
+  };
+
+  if(!isSolo && db && roomId) {
+    get(ref(db, `rooms/${roomId}/seed`)).then(snap => {
+      doStart(snap.val() || Math.random()*999999|0);
+    }).catch(() => doStart(Math.random()*999999|0));
+  } else {
+    doStart(Math.random()*999999|0);
+  }
+}
+
+function resizeGame() {
+  gameCanvas.width  = window.innerWidth;
+  gameCanvas.height = window.innerHeight;
+}
+
+function generateStars() {
+  bgStars = [];
+  for(let i=0; i<120; i++) {
+    bgStars.push({
+      x: Math.random()*10000,
+      y: Math.random()*gameCanvas.height*0.65,
+      r: Math.random()*1.5,
+      spd: 0.1 + Math.random()*0.4,
+      alpha: 0.2 + Math.random()*0.6
+    });
+  }
+}
+
+// ─── INPUT ───
+let jumpPressed = false;
+function setupInput() {
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('touchstart', onTouch, {passive:true});
+  gameCanvas.addEventListener('mousedown', onMouse);
+}
+function teardownInput() {
+  document.removeEventListener('keydown', onKeyDown);
+  document.removeEventListener('touchstart', onTouch);
+  gameCanvas.removeEventListener('mousedown', onMouse);
+}
+function tryJump() {
+  if(!player.alive) return;
+  if(player.onGround) {
+    player.vy = JUMP_VEL;
+    player.onGround = false;
+    player.jumpCount = 1;
+    if(!isSolo && db && playerRef) update(playerRef, { jumped: Date.now() });
+  }
+}
+function onKeyDown(e) {
+  if(e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+    e.preventDefault();
+    tryJump();
+  }
+}
+function onTouch(e) { tryJump(); }
+function onMouse(e) { tryJump(); }
+
+// ─── FIREBASE SYNC ───
+function syncPosition() {
+  if(!playerRef || !player) return;
+  update(playerRef, {
+    x: Math.round(player.x + camX),
+    y: Math.round(player.y),
+    alive: player.alive
+  });
+}
+
+function listenOthers() {
+  otherRef = ref(db, `rooms/${roomId}/players`);
+  onValue(otherRef, snap => {
+    const data = snap.val() || {};
+    // Update otherPlayers map
+    Object.entries(data).forEach(([id, p]) => {
+      if(id === playerId) return;
+      otherPlayers[id] = { ...p };
+    });
+    // Remove disconnected
+    Object.keys(otherPlayers).forEach(id => {
+      if(!data[id]) delete otherPlayers[id];
+    });
+    updateAliveHud();
+  });
+}
+
+function updateAliveHud() {
+  const list = $('aliveList');
+  list.innerHTML = '';
+  // Self
+  const selfDiv = document.createElement('div');
+  selfDiv.className = 'alive-entry';
+  selfDiv.innerHTML = `<div class="alive-pip" style="background:${playerColor}"></div><span>${playerName} (you)</span>`;
+  list.appendChild(selfDiv);
+  // Others
+  Object.values(otherPlayers).forEach(p => {
+    const d = document.createElement('div');
+    d.className = 'alive-entry';
+    d.style.opacity = p.alive === false ? '0.3' : '0.9';
+    d.innerHTML = `<div class="alive-pip" style="background:${p.color||'#888'}"></div><span>${p.name||'?'}${p.alive===false?' ✗':''}</span>`;
+    list.appendChild(d);
+  });
+}
+
+// ─── GAME LOOP ───
+let lastTime = 0;
+function gameLoop(ts) {
+  const dt = Math.min((ts - lastTime) / 16.67, 3);
+  lastTime = ts;
+
+  update_physics(dt);
+  render();
+
+  if(player.alive) {
+    animId = requestAnimationFrame(gameLoop);
+  } else {
+    endGame();
+  }
+}
+
+function update_physics(dt) {
+  if(!player.alive) return;
+
+  const W = gameCanvas.width;
+  const H = gameCanvas.height;
+  const floorY = H * FLOOR_Y_RATIO;
+
+  // Speed grows with distance
+  const speed = BASE_SPEED + Math.min(player.dist / 3000, 4);
+
+  // Move camera
+  camX += speed * dt;
+  player.dist = Math.round(camX / TILE * 2) / 2;
+
+  // Gravity
+  player.vy += GRAVITY * dt;
+  player.y  += player.vy * dt;
+
+  // Floor
+  player.onGround = false;
+  if(player.y >= floorY - TILE) {
+    player.y = floorY - TILE;
+    player.vy = 0;
+    player.onGround = true;
+    player.jumpCount = 0;
+  }
+
+  // Rotate cube
+  if(playerShape === 'cube') player.angle += 0.08 * dt;
+
+  // Level generation
+  level.setDifficulty(camX);
+  level.ensureAhead(camX);
+  level.prune(camX);
+
+  // Collision
+  const px = player.x;
+  const py = player.y;
+  const ps = TILE * 0.8;
+
+  for(const obs of level.obstacles) {
+    const ox = obs.x - camX + player.x;  // world to screen
+    const oy = floorY - obs.h;
+
+    if(rectsOverlap(px - ps/2, py, ps, TILE, ox, oy, obs.w, obs.h)) {
+      if(obs.type === 'spike') {
+        killPlayer();
+        break;
+      } else {
+        // Block — push up if coming from above, kill otherwise
+        const overlapTop = (py + TILE) - oy;
+        const overlapLeft = (px - ps/2 + ps) - ox;
+        const overlapRight = (ox + obs.w) - (px - ps/2);
+
+        if(overlapTop < 24 && player.vy >= 0 && py + TILE/2 < oy + obs.h/2) {
+          player.y = oy - TILE;
+          player.vy = 0;
+          player.onGround = true;
+          player.jumpCount = 0;
+        } else {
+          killPlayer();
+          break;
+        }
+      }
+    }
+  }
+
+  // Fell off bottom
+  if(player.y > H + 200) killPlayer();
+}
+
+function rectsOverlap(ax,ay,aw,ah, bx,by,bw,bh) {
+  return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+}
+
+function killPlayer() {
+  player.alive = false;
+  if(!isSolo && db && playerRef) update(playerRef, { alive: false });
+}
+
+// ─── RENDER ───
+function render() {
+  const W = gameCanvas.width;
+  const H = gameCanvas.height;
+  const floorY = H * FLOOR_Y_RATIO;
+  gctx.clearRect(0,0,W,H);
+
+  drawGameBg(W, H, floorY);
+  drawObstacles(W, H, floorY);
+  drawOtherPlayers(floorY);
+  drawPlayer(floorY);
+  drawHudValues();
+}
+
+function drawGameBg(W, H, floorY) {
+  // Sky gradient
+  const g = gctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, '#050810');
+  g.addColorStop(0.7, '#0a0e1c');
+  g.addColorStop(1, '#0d1428');
+  gctx.fillStyle = g;
+  gctx.fillRect(0,0,W,H);
+
+  // Parallax stars
+  bgStars.forEach(star => {
+    const sx = ((star.x - camX * star.spd) % (W + 40) + W + 40) % (W + 40);
+    gctx.globalAlpha = star.alpha;
+    gctx.fillStyle = '#ffffff';
+    gctx.beginPath();
+    gctx.arc(sx, star.y, star.r, 0, Math.PI*2);
+    gctx.fill();
+  });
+  gctx.globalAlpha = 1;
+
+  // Horizon glow
+  const hg = gctx.createLinearGradient(0, floorY-60, 0, floorY+10);
+  hg.addColorStop(0, 'rgba(0,245,255,0.0)');
+  hg.addColorStop(1, 'rgba(0,245,255,0.08)');
+  gctx.fillStyle = hg;
+  gctx.fillRect(0, floorY-60, W, 70);
+
+  // Floor
+  gctx.fillStyle = '#0e1526';
+  gctx.fillRect(0, floorY, W, H - floorY);
+  gctx.fillStyle = 'rgba(0,245,255,0.5)';
+  gctx.fillRect(0, floorY, W, 2);
+
+  // Floor grid lines
+  gctx.strokeStyle = 'rgba(0,245,255,0.06)';
+  gctx.lineWidth = 1;
+  const gridOff = (camX * 0.2) % TILE;
+  for(let x = -gridOff % TILE; x < W; x += TILE) {
+    gctx.beginPath(); gctx.moveTo(x, floorY); gctx.lineTo(x, H); gctx.stroke();
+  }
+}
+
+function drawObstacles(W, H, floorY) {
+  for(const obs of level.obstacles) {
+    const sx = obs.x - camX + player.x;
+    if(sx > W + 20 || sx + obs.w < -20) continue;
+    const sy = floorY - obs.h;
+
+    if(obs.type === 'spike') {
+      drawSpike(sx, floorY, obs.w);
+    } else {
+      drawBlock(sx, sy, obs.w, obs.h, obs.type === 'tall');
+    }
+  }
+}
+
+function drawSpike(sx, floorY, w) {
+  gctx.save();
+  gctx.fillStyle = '#ff0055';
+  gctx.shadowColor = '#ff0055';
+  gctx.shadowBlur = 10;
+  gctx.beginPath();
+  gctx.moveTo(sx, floorY);
+  gctx.lineTo(sx + w/2, floorY - TILE);
+  gctx.lineTo(sx + w, floorY);
+  gctx.closePath();
+  gctx.fill();
+  gctx.restore();
+}
+
+function drawBlock(sx, sy, w, h, tall) {
+  gctx.save();
+  const color = tall ? '#ff8800' : '#2255ff';
+  gctx.fillStyle = color + '33';
+  gctx.strokeStyle = color;
+  gctx.shadowColor = color;
+  gctx.shadowBlur = 8;
+  gctx.lineWidth = 2;
+  gctx.fillRect(sx, sy, w, h);
+  gctx.strokeRect(sx, sy, w, h);
+  // Diagonal lines
+  gctx.strokeStyle = color + '44';
+  gctx.lineWidth = 1;
+  for(let i=0; i<=h; i+=TILE) {
+    gctx.beginPath(); gctx.moveTo(sx,sy+i); gctx.lineTo(sx+w,sy+i); gctx.stroke();
+  }
+  gctx.restore();
+}
+
+function drawOtherPlayers(floorY) {
+  // Others rendered behind (at their world-x, offset to screen)
+  Object.entries(otherPlayers).forEach(([id, op]) => {
+    if(op.alive === false) return;
+    // Convert their world x to screen x
+    const screenX = (op.x || 0) - camX + player.x;
+    const screenY = op.y || floorY - TILE;
+
+    gctx.globalAlpha = 0.65;
+    drawIcon(gctx, screenX + TILE/2, screenY + TILE/2, TILE, op.shape || 'cube', op.color || '#888', 0);
+    gctx.globalAlpha = 1;
+
+    // Name label
+    gctx.save();
+    gctx.fillStyle = 'rgba(255,255,255,0.7)';
+    gctx.font = '10px Share Tech Mono';
+    gctx.textAlign = 'center';
+    gctx.fillText(op.name || '?', screenX + TILE/2, screenY - 6);
+    gctx.restore();
+  });
+}
+
+function drawPlayer(floorY) {
+  if(!player.alive) return;
+  const cx = player.x + TILE/2;
+  const cy = player.y + TILE/2;
+
+  // Trail
+  gctx.save();
+  for(let i=1; i<=5; i++) {
+    const tx = cx - i*8;
+    gctx.globalAlpha = 0.06 * (6-i);
+    gctx.fillStyle = playerColor;
+    gctx.shadowColor = playerColor;
+    gctx.shadowBlur = 6;
+    gctx.beginPath();
+    gctx.arc(tx, cy, TILE*0.3*(1-i*0.1), 0, Math.PI*2);
+    gctx.fill();
+  }
+  gctx.globalAlpha = 1;
+  gctx.restore();
+
+  drawIcon(gctx, cx, cy, TILE, playerShape, playerColor, player.angle);
+
+  // Landing glow
+  if(player.onGround) {
+    gctx.save();
+    const lg = gctx.createRadialGradient(cx, floorY, 0, cx, floorY, 40);
+    lg.addColorStop(0, playerColor + '33');
+    lg.addColorStop(1, 'transparent');
+    gctx.fillStyle = lg;
+    gctx.fillRect(cx-40, floorY-4, 80, 8);
+    gctx.restore();
+  }
+}
+
+function drawHudValues() {
+  $('distanceHud').textContent = Math.floor(player.dist);
+}
+
+// ─── END GAME ───
+function endGame() {
+  gameRunning = false;
+  teardownInput();
+  clearInterval(syncInterval);
+
+  if(player.dist > bestDist) bestDist = player.dist;
+  $('deathDist').textContent = Math.floor(player.dist);
+  $('bestDist').textContent  = Math.floor(bestDist);
+  $('backLobbyBtn').style.display = isSolo ? 'none' : '';
+
+  setTimeout(() => showScreen('deathScreen'), 400);
+}
+
+// ─── DEATH SCREEN BUTTONS ───
+$('retryBtn').onclick = () => {
+  otherPlayers = {};
+  if(!isSolo && db && roomId) {
+    // Reset room to allow restart — simpler: just restart solo-style
+    isSolo = true;
+  }
+  startCountdown(1);
+};
+
+$('backLobbyBtn').onclick = async () => {
+  isSolo = false;
+  if(!db || !roomId) { showScreen('joinScreen'); return; }
+  // Re-register
+  playerRef = ref(db, `rooms/${roomId}/players/${playerId}`);
+  const pData = { name: playerName, color: playerColor, shape: playerShape, ready: false, alive: true, x: 0, y: 0 };
+  await set(playerRef, pData);
+  onDisconnect(playerRef).remove();
+  isReady = false;
+  $('readyBtn').textContent = 'READY UP';
+  $('readyBtn').className = 'btn btn-primary';
+  // Reset started
+  await update(ref(db, `rooms/${roomId}`), { started: false });
+  showScreen('lobbyScreen');
+  listenLobby();
+};
+
+$('backMenuBtn').onclick = () => {
+  if(playerRef) remove(playerRef);
+  roomListeners.forEach(fn => fn());
+  roomListeners = [];
+  otherPlayers = {};
+  roomId = null; roomRef = null; playerRef = null;
+  isReady = false;
+  isSolo = false;
+  showScreen('menuScreen');
+};
+
+// ─── INIT ───
+showScreen('menuScreen');
+
+</script>
+</body>
+</html>
